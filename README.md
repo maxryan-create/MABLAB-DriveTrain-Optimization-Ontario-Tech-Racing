@@ -1,2 +1,2 @@
 # MABLAB-DriveTrain-Optimization-Ontario-Tech-Racing
-Scripts designed to test different drive train ratios on Ontario Techs Formula SAE car. The goal of optimizing performance, acceleration, and preventing the tires from slipping. This also tests
+Engineered MATLAB scripts to optimize Ontario Tech’s Formula SAE drivetrain ratios for maximum acceleration and traction while preventing wheel slip. Modeled sprocket shear forces under peak dynamic loads to validate safety margins and ensure structural integrity within safe operating limits.
