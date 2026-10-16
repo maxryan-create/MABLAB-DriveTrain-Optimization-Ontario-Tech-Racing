@@ -1,0 +1,172 @@
+clear;
+
+clc;
+
+close all;
+
+% Safety Factor of 1.5
+
+Safety_Rating = 1.5;
+
+% Input torque from the motor to the driver gear (Nm)
+
+F_in = linspace(0, 250, 100);  % Use the datasheet to find peak torque
+
+% CHANGE 255 TO THE PEAK TORQUE OF THE MOTOR IF CHANGED %
+
+
+
+% Safe Input Torque
+
+F_In_Safe = F_in * Safety_Rating; 
+
+
+%Gear input properties
+Teeth_Driven = 42; % The number of teeth of the driven gear
+Teeth_Drive = 11; % The Number of teeth of the drive gear
+Chain_Size = 0.015875; % Chain pitch in m this is 520
+Tooth_Width = 6 / 1000; % Tooth width in meters (approx 6 mm for 520 pitch)
+Tooth_Depth = 0.0052; % Tooth depth in meters (5 mm, typical for a 520 chain)
+CD = 0.1746425; % The centre distance between the two sprockets in m
+
+% Material Properties
+Shear_Strength_Driven = 0.6 * 331e6; % Corrected Shear Strength of 7075-T6 Aluminum (198.6 MPa) 
+Shear_Strength_Drive = 6.05e8; % Corrected Shear Strength of AISI 4120/4118 steel (605 MPA)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%Size calculations
+
+Driven_Radius = Chain_Size/(2*(sind(180/Teeth_Driven))); % Sprocket Radius
+Drive_Radius = Chain_Size/(2*(sind(180/Teeth_Drive))); % Sprocket Radius
+
+F_Chain_Driven = F_In_Safe / Drive_Radius; % Chain force (N)
+F_Chain_Drive = F_In_Safe / Drive_Radius; % Chain force (N)
+
+Wrap_Angle_Driven = 180 - 2 * asind(((2 * Drive_Radius) - (2 * Driven_Radius)) /(2*CD)); %Angle of Chain aroung sprocket
+Wrap_Angle_Drive = 180 + 2 * asind(((2 * Drive_Radius) - (2 * Driven_Radius)) /(2*CD)); %Angle of Chain aroung sprocket
+
+
+Number_Incontact_Driven = Teeth_Driven * (Wrap_Angle_Driven/360); % Estimated number of teeth sharing the load
+Number_Incontact_Drive = Teeth_Drive * (Wrap_Angle_Drive/360); % Estimated number of teeth sharing the load
+
+% Correct Shear Area Calculation
+
+Tooth_Area = Tooth_Width * Tooth_Depth; % Effective shear area per tooth (m^2)
+
+% Force on a single tooth (adjusted for load-sharing teeth)
+
+F_Driven_Tooth = F_Chain_Driven / (Number_Incontact_Driven / 2); % Force per tooth (N)
+F_Drive_Tooth = F_Chain_Drive / (Number_Incontact_Drive / 2); % Force per tooth (N)
+
+% Shear Stress Calculation
+
+Shear_Stress_Driven = F_Driven_Tooth / Tooth_Area; % Shear stress on each tooth (Pa)
+Shear_Stress_Drive = F_Drive_Tooth / Tooth_Area; % Shear stress on each tooth (Pa)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% Plot the graph Driven
+
+figure; % Create Graph
+
+yyaxis left; % Set y-axis for shear stress
+
+plot(F_In_Safe, Shear_Stress_Driven / 1e6, 'b-', 'LineWidth', 2); % Shear Stress vs Input Torque
+
+ylabel('Shear Stress (MPa)');% Add Y Label
+
+
+
+% Highlight shear strength as a dotted line
+
+hold on; % Add new plot line
+
+yline(Shear_Strength_Driven / 1e6, 'k--', 'LineWidth', 1.5, 'Label', 'Shear Strength'); % Correctly scaled dotted line
+
+
+
+yyaxis right; % Set y-axis for chain force
+
+plot(F_In_Safe, F_Chain_Driven, 'r--', 'LineWidth', 2); % Chain Force vs Input Torque Plot
+
+
+
+
+
+% Add labels and title
+
+ylabel('Chain Force (N)'); % Add Y Label
+
+xlabel('Input Torque on Driven Gear (Nm)'); % Add X Label
+
+title('Shear Stress and Chain Force vs Input Torque'); % Add a title
+
+legend('Shear Stress', 'Shear Strength', 'Chain Force', 'Location', 'northwest'); % Add a legend
+
+grid on;
+
+
+
+% Display warning if shear stress exceeds strength
+
+if max(Shear_Stress_Driven) > Shear_Strength_Driven;
+
+    disp('Warning: The gear will shear under maximum input torque!'); %Output Warning into Command Window
+
+else
+
+    disp('The gear is safe under the given input torque range.'); % Output Safe Message into Command Window
+end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+% Plot the graph Drive
+
+figure; % Create Graph
+
+yyaxis left; % Set y-axis for shear stress
+
+plot(F_In_Safe, Shear_Stress_Drive / 1e6, 'b-', 'LineWidth', 2); % Shear Stress vs Input Torque
+
+ylabel('Shear Stress (MPa)');% Add Y Label
+
+
+
+% Highlight shear strength as a dotted line
+
+hold on; % Add new plot line
+
+yline(Shear_Strength_Drive / 1e6, 'k--', 'LineWidth', 1.5, 'Label', 'Shear Strength'); % Correctly scaled dotted line
+
+
+
+yyaxis right; % Set y-axis for chain force
+
+plot(F_In_Safe, F_Chain_Drive, 'r--', 'LineWidth', 2); % Chain Force vs Input Torque Plot
+
+
+
+
+
+% Add labels and title
+
+ylabel('Chain Force (N)'); % Add Y Label
+
+xlabel('Input Torque on Drive Gear (Nm)'); % Add X Label
+
+title('Shear Stress and Chain Force vs Input Torque'); % Add a title
+
+legend('Shear Stress', 'Shear Strength', 'Chain Force', 'Location', 'northwest'); % Add a legend
+
+grid on;
+
+
+
+% Display warning if shear stress exceeds strength
+
+if max(Shear_Stress_Drive) > Shear_Strength_Drive
+
+    disp('Warning: The gear will shear under maximum input torque!'); %Output Warning into Command Window
+
+else
+
+    disp('The gear is safe under the given input torque range.'); % Output Safe Message into Command Window
+end
