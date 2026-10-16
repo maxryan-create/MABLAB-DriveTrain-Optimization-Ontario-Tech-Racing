@@ -1,1 +1,472 @@
 
+% =========================================================================
+% VEHICLE ACCELERATION SIMULATION & GEAR RATIO SWEEP
+% EMRAX 208 MOTOR MODEL
+% =========================================================================
+
+clear;
+clc;
+close all;
+
+% =========================================================================
+% MOTOR & DRIVETRAIN PARAMETERS
+% =========================================================================
+
+Peak_Torque = 150;                  % Motor peak torque (Nm)
+Continuous_Torque = 83;             % Motor continuous torque (Nm)
+
+Peak_Power = 86e3;                  % Motor peak power (W)
+Max_RPM = 7000;                     % Maximum motor RPM
+Max_Torque = 482;                   % Max torque on 
+
+E = 0.85;                            % Drivetrain efficiency
+R = 0.2;                            % Tire radius (m)
+
+% Calculate peak torque -> constant power crossover speed
+Base_RPM = Peak_Power / ...
+    (Peak_Torque * 2*pi/60);
+
+% =========================================================================
+% VEHICLE & ENVIRONMENTAL PARAMETERS
+% =========================================================================
+
+M = 282;                            % Car mass (kg)
+g = 9.81;                           % Acceleration due to gravity (m/s^2)
+
+p = 1.293;                          % Air density (kg/m^3)
+Cd = 1.257;                         % Drag coefficient
+Cdf = 3.1;                          % Downforce coefficient
+A = 1.0;                            % Frontal area (m^2)
+
+Crr = 0.023;                        % Rolling resistance coefficient
+
+% =========================================================================
+% VEHICLE DYNAMICS / CHASSIS PARAMETERS
+% =========================================================================
+
+mo = 1.48;                          % Tire friction coefficient
+CGz = 0.27;                         % Center of gravity height (m)
+wb = 1.55;                          % Wheelbase (m)
+
+% Maximum tire torque capability
+Static_Tire_Peak_Torque = 482;      % Nm
+
+% =========================================================================
+% SIMULATION OPTIONS
+% =========================================================================
+
+% TRUE  = simulate peak-performance acceleration
+% FALSE = simulate continuous motor torque
+UsePeakTorque = true;
+
+% Approximate inverter speed control (not a measured EMRAX controller map).
+% Near the RPM limit, reduce drive force to road load plus M*(speed error)/tau.
+% At the limit, motor torque balances resistance instead of switching off.
+Governor_Time_Constant = 0.25;       % s; must be >= dt
+% Existing traction model assumes a rear driven axle (positive load transfer).
+% Static_Tire_Peak_Torque is retained as a TOTAL driven-axle limit.
+
+% =========================================================================
+% TEST GEAR RATIOS
+% =========================================================================
+
+Ratios = [3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, ...
+          3.8, 3.9, 4.0, 4.1, 4.2, 4.3, 4.4, 4.5];
+
+num_ratios = length(Ratios);
+
+% =========================================================================
+% SIMULATION PARAMETERS
+% =========================================================================
+
+dt = 0.01;                          % Time step (s)
+t_vec = 0:dt:20;                    % Simulation time
+num_steps = length(t_vec);
+assert(Governor_Time_Constant >= dt, ...
+    'Governor_Time_Constant must be at least dt.');
+
+% =========================================================================
+% DATA STORAGE
+% =========================================================================
+
+LA = cell(1, num_ratios);            % Acceleration
+LV = cell(1, num_ratios);            % Velocity
+LRPM = cell(1, num_ratios);          % Motor RPM
+LTorque = cell(1, num_ratios);       % Motor torque
+LForce = cell(1, num_ratios);        % Wheel force
+MTorque = cell(1, num_ratios);       % Max wheel torque
+
+% =========================================================================
+% SIMULATION LOOPS
+% =========================================================================
+
+for i = 1:num_ratios
+
+    RATIO = Ratios(i);
+
+    % Initialize history vectors
+    a_hist = zeros(1, num_steps);
+    V_hist = zeros(1, num_steps);
+    RPM_hist = zeros(1, num_steps);
+    Torque_hist = zeros(1, num_steps);
+    Force_hist = zeros(1, num_steps);
+    M_Torque_Hist = zeros(1, num_steps);
+
+    % Initial conditions
+    V = 0;
+    a = 0;
+
+    Fdrag = 0;
+    Fdown = 0;
+
+    rr = Crr * M * g;
+
+    Wtlong = 0;
+
+    % Initial rear axle load / traction
+    FFf = mo * (0.5 * M * g);
+
+    % =====================================================================
+    % TIME LOOP
+    % =====================================================================
+
+    for step = 1:num_steps
+
+        % -----------------------------------------------------------------
+        % 1. MOTOR SPEED
+        % -----------------------------------------------------------------
+        
+        % Wheel angular speed
+        Wheel_RPM = (V / (2*pi*R)) * 60;
+
+        % Motor RPM
+        Motor_RPM = Wheel_RPM * RATIO;
+
+        % -----------------------------------------------------------------
+        % 2. MOTOR TORQUE MODEL
+        % -----------------------------------------------------------------
+
+        % Available torque envelope; speed control is applied to force below.
+        if UsePeakTorque
+            Motor_Torque = min(Peak_Torque, ...
+                Peak_Power / max(Motor_RPM * 2*pi/60, eps));
+        else
+            % Continuous power is not specified: retain the original
+            % constant-continuous-torque assumption.
+            Motor_Torque = Continuous_Torque;
+        end
+
+        % -----------------------------------------------------------------
+        % 3. MOTOR TORQUE -> WHEEL TORQUE
+        % -----------------------------------------------------------------
+
+        Wheel_Torque = Motor_Torque * RATIO * E;
+
+        % Wheel drive force
+        F = Wheel_Torque / R;
+
+        % -----------------------------------------------------------------
+        % 4. TIRE TORQUE / TRACTION LIMIT
+        % -----------------------------------------------------------------
+
+        % Convert tire torque limit to force
+        Tire_Force_Limit = Static_Tire_Peak_Torque / R;
+
+        % Maximum available traction
+        Fcp = min([FFf, F, Tire_Force_Limit]);
+
+        % -----------------------------------------------------------------
+        % 5. AERODYNAMIC FORCES
+        % -----------------------------------------------------------------
+
+        Fdrag = 0.5 * p * A * Cd * V^2;
+
+        Fdown = 0.5 * p * A * Cdf * V^2;
+
+        % -----------------------------------------------------------------
+        % 6. ROLLING RESISTANCE
+        % -----------------------------------------------------------------
+
+        rr = Crr * (M*g + Fdown);
+
+        % -----------------------------------------------------------------
+        % 7. VEHICLE ACCELERATION
+        % -----------------------------------------------------------------
+
+        % RPM governor: cap requested drive force, not vehicle speed or a.
+        % Torque stays positive at steady speed to overcome drag and rolling
+        % resistance. If resistance exceeds drive force, a remains negative.
+        Speed_Limit = (Max_RPM / RATIO) * (2*pi*R/60);
+        Road_Load = Fdrag + rr;
+        Governor_Force = max(0, Road_Load + ...
+            M * (Speed_Limit - V) / Governor_Time_Constant);
+        Fcp = min(Fcp, Governor_Force);
+        a = (Fcp - Road_Load) / M;
+
+        % No reverse motion in this forward-only model. This is a standstill
+        % constraint only; negative acceleration at positive speed is allowed.
+        if V <= 0 && a < 0
+            a = 0;
+        end
+
+        % Report delivered torque after traction and governor limits.
+        %Wheel_Torque = Fcp * R;
+        Motor_Torque = Wheel_Torque / (RATIO * E);
+
+        % -----------------------------------------------------------------
+        % 9. DYNAMIC WEIGHT TRANSFER
+        % -----------------------------------------------------------------
+
+        Wtlong = M * a * (CGz / wb);
+
+        % Dynamic rear axle load
+        Rear_Load = ...
+            0.5 * M * g + ...
+            0.5 * Fdown + ...
+            Wtlong;
+
+        % Rear tire traction limit
+        FFf = mo * Rear_Load;
+
+        % -----------------------------------------------------------------
+        % 10. STORE DATA
+        % -----------------------------------------------------------------
+
+        a_hist(step) = a;
+        V_hist(step) = V;
+        RPM_hist(step) = Motor_RPM;
+        Torque_hist(step) = Motor_Torque;
+        Force_hist(step) = Fcp;
+        M_Torque_Hist(step) = Wheel_Torque/2;
+
+        % Integrate AFTER logging so speed, RPM, forces and a share a timestamp.
+        if step < num_steps
+            V = max(0, V + a * dt);
+        end
+
+    end
+
+    % Save simulation
+    LA{i} = a_hist;
+    LV{i} = V_hist;
+    LRPM{i} = RPM_hist;
+    LTorque{i} = Torque_hist;
+    LForce{i} = Force_hist;
+    MTorque{i} = M_Torque_Hist;
+
+end
+
+% =========================================================================
+% MOTOR / GEAR INFORMATION
+% =========================================================================
+
+fprintf('\n============================================================\n');
+fprintf('EMRAX 208 MOTOR MODEL\n');
+fprintf('============================================================\n');
+
+fprintf('Peak Torque:        %.1f Nm\n', Peak_Torque);
+fprintf('Continuous Torque:  %.1f Nm\n', Continuous_Torque);
+fprintf('Peak Power:         %.1f kW\n', Peak_Power/1000);
+fprintf('Maximum RPM:        %.0f RPM\n', Max_RPM);
+fprintf('Torque/Power Base:  %.0f RPM\n', Base_RPM);
+
+fprintf('\nRPM-limited speed and simulated final speed:\n');
+fprintf('------------------------------------------------------------\n');
+
+for i = 1:num_ratios
+
+    RATIO = Ratios(i);
+
+    % Vehicle speed when motor reaches 7000 RPM
+    Vmax = ...
+        (Max_RPM / RATIO) * ...
+        (2*pi*R/60);
+
+    Vmax_kmh = Vmax * 3.6;
+
+    fprintf('Ratio %.1f: RPM limit %.1f km/h; final %.1f km/h\n', ...
+        RATIO, Vmax_kmh, LV{i}(end)*3.6);
+
+end
+
+fprintf('============================================================\n');
+
+% =========================================================================
+% PLOTTING RESULTS
+% =========================================================================
+
+figure('Name', ...
+    'Gear Ratio Sweep Comparison', ...
+    'NumberTitle', 'off');
+
+% =========================================================================
+% VELOCITY
+% =========================================================================
+
+subplot(2,1,1);
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, LV{i} * 3.6, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Velocity (km/h)');
+
+title('Vehicle Speed vs. Time');
+
+legend('Location', 'southeast');
+
+% =========================================================================
+% ACCELERATION
+% =========================================================================
+
+subplot(2,1,2);
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, LA{i}, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Acceleration (m/s^2)');
+
+title('Vehicle Acceleration vs. Time');
+
+legend('Location', 'northeast');
+
+% =========================================================================
+% MOTOR RPM
+% =========================================================================
+
+figure('Name', ...
+    'Motor RPM', ...
+    'NumberTitle', 'off');
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, LRPM{i}, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+yline(Max_RPM, '--', '7000 RPM Limit');
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Motor RPM');
+
+title('Motor RPM vs. Time');
+
+legend('Location', 'southeast');
+
+% =========================================================================
+% MOTOR TORQUE
+% =========================================================================
+
+figure('Name', ...
+    'Motor Torque', ...
+    'NumberTitle', 'off');
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, LTorque{i}, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+yline(Peak_Torque, '--', '150 Nm Peak');
+yline(Continuous_Torque, '--', '83 Nm Continuous');
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Motor Torque (Nm)');
+
+title('Motor Torque vs. Time');
+
+legend('Location', 'northeast');
+
+% =========================================================================
+% DRIVE FORCE
+% =========================================================================
+
+figure('Name', ...
+    'Wheel Drive Force', ...
+    'NumberTitle', 'off');
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, LForce{i}, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Drive Force (N)');
+
+title('Tire Contact Patch Drive Force');
+
+legend('Location', 'northeast');
+
+% =========================================================================
+% Wheel Torque
+% =========================================================================
+
+figure('Name', ...
+    'Wheel Torque', ...
+    'NumberTitle', 'off');
+
+hold on;
+
+for i = 1:num_ratios
+
+    plot(t_vec, MTorque{i}, ...
+        'LineWidth', 1.5, ...
+        'DisplayName', ...
+        sprintf('Ratio %.1f', Ratios(i)));
+
+end
+
+%yline(Max_Torque, '--', '482 Nm Peak');
+
+
+grid on;
+
+xlabel('Time (s)');
+ylabel('Delivered Torque per Driven Wheel (Nm)');
+
+title('Delivered Wheel Torque vs. Time (Equal Split)');
+
+legend('Location', 'northeast');
