@@ -4,3 +4,6 @@ Engineered MATLAB scripts to optimize Ontario Tech’s Formula SAE drivetrain ra
 -Ratio Optimization: Simulates motor-to-wheel torque, force, and acceleration across different drive ratios to rapidly analyze performance without manual calculations, in order to find the optimal ratio for performance.
 
 -Shear Force Analysis: Calculates dynamic forces on drive and driven sprockets to evaluate structural limits across custom configurations.
+
+## Charts
+<img width="1663" height="957" alt="image" src="https://github.com/user-attachments/assets/df22773a-c104-4426-869a-fb2a75a415f0" />
